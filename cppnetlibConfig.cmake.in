@@ -1,24 +1,38 @@
-# - Config file for the cppnetlib package
-# It defines the following variables
-#  CPPNETLIB_INCLUDE_DIRS - include directories for cppnetlib
-#  CPPNETLIB_LIBRARIES    - libraries to link against
-#  CPPNETLIB_EXECUTABLE   - the bar executable
+# - Config file for the cppnetlib package 
+# It defines the following variables targets
+#  cppnetlib::cppnetlib   - include directories and usage requirements for cppnetlib
+# Libraries and usage requirements^
+#  cppnetlib::uri 
+#  cppnetlib::server-parsers
+#  cppnetlib::client-connections
+# Variables
+#  CPPNETLIB_INCLUDE_DIRS - include directories for cppnetlib (empty, usage requirements propageted through libraries)
+#  CPPNETLIB_LIBRARIES    - libraries to link against 
 
-# Compute paths
-get_filename_component(CPPNETLIB_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
-set(CPPNETLIB_INCLUDE_DIRS "@CONF_INCLUDE_DIRS@")
+set(CPP-NETLIB_STATIC_BOOST @CPP-NETLIB_STATIC_BOOST@)
+set(CPP-NETLIB_ENABLE_HTTPS @CPP-NETLIB_ENABLE_HTTPS@)
+set(CPP-NETLIB_STATIC_OPENSSL @CPP-NETLIB_STATIC_OPENSSL@)
 
-# Our library dependencies (contains definitions for IMPORTED targets)
-if(    NOT TARGET cppnetlib-client-connections
-   AND NOT TARGET cppnetlib-server-parsers
-   AND NOT TARGET cppnetlib-uri
-   AND NOT CPPNETLIB_BINARY_DIR)
-  include("${CPPNETLIB_CMAKE_DIR}/cppnetlibTargets.cmake")
+# Use Boost's static libraries
+if (CPP-NETLIB_STATIC_BOOST)
+  set(Boost_USE_STATIC_LIBS ON)
 endif()
 
-# These are IMPORTED targets created by cppnetlibTargets.cmake
-set(CPPNETLIB_LIBRARIES
-    cppnetlib-client-connections
-    cppnetlib-server-parsers
-    cppnetlib-uri)
-#set(CPPNETLIB_EXECUTABLE ...) # maybe the examples?
+# Always use multi-threaded Boost libraries.
+set(Boost_USE_MULTITHREADED ON)
+
+if (CPP-NETLIB_ENABLE_HTTPS)
+ if (CPP-NETLIB_STATIC_OPENSSL)
+   set(OPENSSL_USE_STATIC_LIBS TRUE)
+ endif()
+
+ find_package(OpenSSL REQUIRED)
+endif()
+
+find_package(Boost 1.58.0 REQUIRED COMPONENTS system thread regex)
+find_package(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cppnetlibTargets.cmake")
+
+set(CPPNETLIB_INCLUDE_DIRS)
+set(CPPNETLIB_LIBRARIES cppnetlib::client-connections cppnetlib::server-parsers cppnetlib::uri)
