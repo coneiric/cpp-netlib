@@ -15,6 +15,10 @@ option( CPP-NETLIB_ENABLE_HTTPS "Build cpp-netlib with support for https if Open
 option( CPP-NETLIB_STATIC_OPENSSL "Build cpp-netlib using static OpenSSL" OFF)
 option( CPP-NETLIB_STATIC_BOOST "Build cpp-netlib using static Boost" OFF)
 
+if (NOT DEFINED CPP-NETLIB_WINAPI_VERSION)
+  set(CPP-NETLIB_WINAPI_VERSION 0x0501)
+endif()
+
 include(GNUInstallDirs)
 
 # determine install path for CMake config files
@@ -116,7 +120,7 @@ endif()
 
 
 if (WIN32)
-  target_compile_definitions(cppnetlib INTERFACE _WIN32_WINNT=0x0501)
+  target_compile_definitions(cppnetlib INTERFACE _WIN32_WINNT=${CPP-NETLIB_WINAPI_VERSION} BOOST_USE_WINAPI_VERSION=${CPP-NETLIB_WINAPI_VERSION})
 
   if (MSVC)
     target_compile_options(cppnetlib INTERFACE /bigobj)
