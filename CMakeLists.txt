@@ -4,8 +4,8 @@
 # (See accompanying file LICENSE_1_0.txt or copy at
 # http://www.boost.org/LICENSE_1_0.txt)
 
-cmake_minimum_required(VERSION 2.8)
-project(CPP-NETLIB)
+cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
+project(CPP-NETLIB CXX)
 
 option( CPP-NETLIB_BUILD_SHARED_LIBS "Build cpp-netlib as shared libraries." OFF )
 option( CPP-NETLIB_BUILD_TESTS "Build the cpp-netlib project tests." ON)
@@ -42,22 +42,25 @@ endif()
 # Use Boost's static libraries
 if (CPP-NETLIB_STATIC_BOOST)
   set(Boost_USE_STATIC_LIBS ON)
+else()
+  # We need this for all tests to use the dynamic version.
+  set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS BOOST_ALL_DYN_LINK)
 endif()
 
-# We need this for all tests to use the dynamic version.
-add_definitions(-DBOOST_TEST_DYN_LINK)
+# The interface target for public usage requirements
+add_library(cppnetlib INTERFACE)
 
 # Always use multi-threaded Boost libraries.
-set(Boost_USE_MULTI_THREADED ON)
+set(Boost_USE_MULTITHREADED ON)
 
-find_package(Boost 1.58.0 REQUIRED COMPONENTS system thread)
+find_package(Boost 1.58.0 REQUIRED COMPONENTS system thread regex)
 
 if (CPP-NETLIB_ENABLE_HTTPS)
  if (APPLE)
    # If we're on OS X check for Homebrew's copy of OpenSSL instead of Apple's
    if (NOT OpenSSL_DIR)
      find_program(HOMEBREW brew)
-     if (HOMEBREW STREQUAL "HOMEBREW-NOTFOUND")
+     if (NOT HOMEBREW)
        message(WARNING "Homebrew not found: not using Homebrew's OpenSSL")
        if (NOT OPENSSL_ROOT_DIR)
          message(WARNING "Use -DOPENSSL_ROOT_DIR for non-Apple OpenSSL")
@@ -69,13 +72,19 @@ if (CPP-NETLIB_ENABLE_HTTPS)
      endif()
    endif()
  endif()
+
  if (CPP-NETLIB_STATIC_OPENSSL)
-   set(CMAKE_FIND_LIBRARY_SUFFIXES .a)
+   set(OPENSSL_USE_STATIC_LIBS TRUE)
  endif()
- find_package(OpenSSL)
+
+ find_package(OpenSSL REQUIRED)
+ target_compile_definitions(cppnetlib INTERFACE BOOST_NETWORK_ENABLE_HTTPS)
+ if (CPP-NETLIB_STATIC_OPENSSL)
+   target_link_libraries(cppnetlib INTERFACE ${CMAKE_DL_LIBS})
+ endif()
 endif()
 
-find_package( Threads )
+
 set(CMAKE_VERBOSE_MAKEFILE true)
 
 set(CPPNETLIB_VERSION_MAJOR 0) # MUST bump this whenever we make ABI-incompatible changes
@@ -83,95 +92,114 @@ set(CPPNETLIB_VERSION_MINOR 13)
 set(CPPNETLIB_VERSION_PATCH 0)
 set(CPPNETLIB_VERSION_STRING ${CPPNETLIB_VERSION_MAJOR}.${CPPNETLIB_VERSION_MINOR}.${CPPNETLIB_VERSION_PATCH})
 
-if (CMAKE_BUILD_TYPE MATCHES Debug)
-    add_definitions(-DBOOST_NETWORK_DEBUG)
+set_property(DIRECTORY APPEND PROPERTY COMPILE_DEFINITIONS $<$<CONFIG:Debug>:BOOST_NETWORK_DEBUG>)
+
+# Use C++11
+if (CMAKE_VERSION VERSION_LESS 3.8)
+  set(CMAKE_CXX_STANDARD 11)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+else()
+  target_compile_features(cppnetlib INTERFACE cxx_std_11)
 endif()
 
-if (OPENSSL_FOUND)
-    add_definitions(-DBOOST_NETWORK_ENABLE_HTTPS)
-    include_directories(${OPENSSL_INCLUDE_DIR})
-endif()
-
-if (${CMAKE_CXX_COMPILER_ID} MATCHES GNU)
-  # Use C++11 when using GNU compilers.
-  set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -std=c++11")
-elseif (${CMAKE_CXX_COMPILER_ID} MATCHES Clang)
-  # We want to link in C++11 mode in Clang too, but also set a high enough
-  # template depth for the template metaprogramming.
-  set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -ftemplate-depth=256 -std=c++11")
-  if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+  add_compile_options(-Wall)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  # A high enough template depth for the template metaprogramming.
+  add_compile_options(-Wall -ftemplate-depth=256)
+  if (CMAKE_SYSTEM_NAME MATCHES "Darwin")
     # Use libc++ only in OS X.
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
-    set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc++")
+    add_compile_options(-stdlib=libc++)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lc++") 
   endif()
 endif()
 
 
-if (MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /bigobj")
-    set(gtest_force_shared_crt true)
+if (WIN32)
+  target_compile_definitions(cppnetlib INTERFACE _WIN32_WINNT=0x0501)
+
+  if (MSVC)
+    target_compile_options(cppnetlib INTERFACE /bigobj)
+    target_compile_definitions(cppnetlib INTERFACE _SCL_SECURE_NO_WARNINGS)
+  endif()
+
+  if (MINGW)
+    target_link_libraries(cppnetlib INTERFACE ws2_32 wsock32)
+  endif()
 endif()
 
-if (Boost_FOUND)
-    if (MSVC)
-      add_definitions(-D_SCL_SECURE_NO_WARNINGS)
-    endif(MSVC)
-    if (WIN32)
-      add_definitions(-D_WIN32_WINNT=0x0501)
-    endif(WIN32)
-    include_directories(${Boost_INCLUDE_DIRS})
-    link_directories(${Boost_LIBRARY_DIRS})
+target_include_directories(cppnetlib INTERFACE 
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
-    enable_testing()
-    add_subdirectory(libs/network/src)
-    if (CPP-NETLIB_BUILD_TESTS)
-      add_subdirectory(deps/googletest)
-      add_subdirectory(libs/network/test)
-    endif (CPP-NETLIB_BUILD_TESTS)
-    if (CPP-NETLIB_BUILD_EXAMPLES)
-      add_subdirectory(libs/network/example)
-    endif (CPP-NETLIB_BUILD_EXAMPLES)
-endif(Boost_FOUND)
+find_package(Threads REQUIRED)
+target_link_libraries(cppnetlib INTERFACE Boost::thread Threads::Threads)
 
-enable_testing()
+install(TARGETS cppnetlib EXPORT cppnetlibTargets)
 
-set(CPP-NETLIB_LIBRARIES ${Boost_LIBRARIES} CACHE INTERNAL "Dependent libraries for header-only use")
+add_subdirectory(libs/network/src)
 
-install(DIRECTORY boost DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+add_library(cppnetlib::cppnetlib ALIAS cppnetlib)
+add_library(cppnetlib::uri ALIAS uri)
+add_library(cppnetlib::server-parsers ALIAS server-parsers)
+add_library(cppnetlib::client-connections ALIAS client-connections)
 
-###
-## Export Targets
-# (so cpp-netlib can be easily used by other CMake projects)
-# [see http://www.cmake.org/Wiki/CMake/Tutorials/How_to_create_a_ProjectConfig.cmake_file]
+if (CPP-NETLIB_BUILD_TESTS)
+  enable_testing()
 
-# Add all targets to the build-tree export set
-export(TARGETS cppnetlib-client-connections cppnetlib-server-parsers cppnetlib-uri
-    FILE "${PROJECT_BINARY_DIR}/cppnetlibTargets.cmake")
-# Export the package for use from the build-tree
-# (this registers the build-tree with a global CMake-registry)
-export(PACKAGE cppnetlib)
-# Create the cppnetlibConfig.cmake and cppnetlibConfigVersion files
-file(RELATIVE_PATH REL_INCLUDE_DIR "${INSTALL_CMAKE_DIR}"
-    "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
-# ... for the build tree
-set(CONF_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}" ${Boost_INCLUDE_DIRS})
+  if (MSVC)
+    set(gtest_force_shared_crt ON CACHE BOOL "Use shared (DLL) run-time lib even when Google Test is built as static lib.")
+  endif()
+
+  add_subdirectory(deps/googletest)
+
+  if (MSVC)
+    target_compile_definitions(gtest PUBLIC _SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING)
+    target_compile_definitions(gtest_main PUBLIC _SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING)
+    target_compile_definitions(gmock PUBLIC _SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING)
+    target_compile_definitions(gmock_main PUBLIC _SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING)
+  endif()
+
+  add_subdirectory(libs/network/test)
+endif()
+
+if (CPP-NETLIB_BUILD_EXAMPLES)
+  add_library(cxxopts INTERFACE)
+  target_include_directories(cxxopts INTERFACE deps/cxxopts/src)
+
+  add_subdirectory(libs/network/example)
+endif ()
+
+install(DIRECTORY boost DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT dev)
+
+### 
+## Export Targets 
+# (so cpp-netlib can be easily used by other CMake projects) 
+# [see http://www.cmake.org/Wiki/CMake/Tutorials/How_to_create_a_ProjectConfig.cmake_file] 
+ 
+# Add all targets to the build-tree export set 
+export(EXPORT cppnetlibTargets 
+    FILE "${CMAKE_CURRENT_BINARY_DIR}/cppnetlibTargets.cmake"
+    NAMESPACE cppnetlib::)
 configure_file(cppnetlibConfig.cmake.in
-    "${PROJECT_BINARY_DIR}/cppnetlibConfig.cmake" @ONLY)
-# ... for the install tree
-set(CONF_INCLUDE_DIRS "\${CPPNETLIB_CMAKE_DIR}/${REL_INCLUDE_DIR}")
-set(CONF_INCLUDE_DIRS ${CONF_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
-configure_file(cppnetlibConfig.cmake.in
-    "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/cppnetlibConfig.cmake" @ONLY)
-# ... for both
-configure_file(cppnetlibConfigVersion.cmake.in
-    "${PROJECT_BINARY_DIR}/cppnetlibConfigVersion.cmake" @ONLY)
-# Install the cppnetlibConfig.cmake and cppnetlibConfigVersion.cmake
+    "${CMAKE_CURRENT_BINARY_DIR}/cppnetlibConfig.cmake" @ONLY)
+
+# Export the package for use from the build-tree 
+# (this registers the build-tree with a global CMake-registry) 
+export(PACKAGE cppnetlib) 
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(cppnetlibConfigVersion.cmake VERSION ${CPPNETLIB_VERSION_STRING} COMPATIBILITY AnyNewerVersion)
+
+# Install the cppnetlibConfig.cmake and cppnetlibConfigVersion.cmake 
 install(FILES
-    "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/cppnetlibConfig.cmake"
-    "${PROJECT_BINARY_DIR}/cppnetlibConfigVersion.cmake"
+    "${PROJECT_BINARY_DIR}/cppnetlibConfig.cmake" 
+    "${PROJECT_BINARY_DIR}/cppnetlibConfigVersion.cmake" 
     DESTINATION "${INSTALL_CMAKE_DIR}"
-    COMPONENT dev)
-# Install the export set for use with the install-tree
-install(EXPORT cppnetlibTargets
-    DESTINATION "${INSTALL_CMAKE_DIR}"
-    COMPONENT dev)
+    COMPONENT dev) 
+
+# Install the export set for use with the install-tree 
+install(EXPORT cppnetlibTargets 
+    FILE cppnetlibTargets.cmake
+    NAMESPACE cppnetlib::
+    DESTINATION "${INSTALL_CMAKE_DIR}")
